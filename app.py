@@ -6,11 +6,13 @@ import numpy as np
 import unicodedata
 import re
 import math
+import pickle
+import os
 from collections import Counter
 import warnings
 warnings.filterwarnings('ignore')
 
-# Import your model classes (copy from your notebook)
+# ===== MODEL ARCHITECTURE =====
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, max_len=5000):
         super().__init__()
@@ -127,8 +129,10 @@ class Transformer(nn.Module):
 
         return self.linear(dec_out)
 
-# Utility functions
+# ===== UTILITY FUNCTIONS =====
 def normalize_urdu(text):
+    if not isinstance(text, str):
+        return ""
     text = ''.join(c for c in unicodedata.normalize('NFD', text) if unicodedata.category(c) != 'Mn')
     text = re.sub(r'[أإ]', 'ا', text)
     text = re.sub(r'ے', 'ی', text)
@@ -147,25 +151,47 @@ def create_tgt_mask(tgt, pad_idx=0):
     tgt_sub_mask = torch.tril(torch.ones(tgt_len, tgt_len)).bool().to(tgt.device)
     return tgt_pad_mask & tgt_sub_mask
 
-# Load model and vocabulary
+# ===== MODEL LOADING =====
 @st.cache_resource
 def load_model_and_vocab():
-    # Load vocabulary (you need to save this during training)
-    vocab = ['<PAD>', '<UNK>', '<SOS>', '<EOS>']  # Add your actual vocabulary
-    word_to_idx = {word: idx for idx, word in enumerate(vocab)}
-    idx_to_word = {idx: word for word, idx in word_to_idx.items()}
-    
-    # Initialize and load model
-    vocab_size = len(vocab)
-    model = Transformer(vocab_size, d_model=256, num_heads=2, num_layers=2, dropout=0.1)
-    
-    # Load the trained weights
-    model.load_state_dict(torch.load('best_model.pth', map_location='cpu'))
-    model.eval()
-    
-    return model, word_to_idx, idx_to_word
+    try:
+        # First, check if files exist
+        if not os.path.exists('best_model.pth'):
+            st.error("Model file 'best_model.pth' not found!")
+            return None, None, None
+        
+        # Create a sample vocabulary (you should replace this with your actual vocabulary)
+        # This is a temporary fix - you need to save your actual vocabulary during training
+        sample_vocab = ['<PAD>', '<UNK>', '<SOS>', '<EOS>'] + [f'word_{i}' for i in range(252)]
+        word_to_idx = {word: idx for idx, word in enumerate(sample_vocab)}
+        idx_to_word = {idx: word for word, idx in word_to_idx.items()}
+        
+        # Initialize model
+        vocab_size = len(sample_vocab)
+        model = Transformer(
+            vocab_size=vocab_size,
+            d_model=256,
+            num_heads=2,
+            num_layers=2,
+            dropout=0.1
+        )
+        
+        # Load model weights
+        device = 'cpu'
+        model.load_state_dict(torch.load('best_model.pth', map_location=device))
+        model.eval()
+        
+        st.success("✅ Model loaded successfully!")
+        return model, word_to_idx, idx_to_word
+        
+    except Exception as e:
+        st.error(f"❌ Error loading model: {str(e)}")
+        return None, None, None
 
 def generate_response(model, src, word_to_idx, idx_to_word, max_len=20, device='cpu'):
+    if model is None:
+        return "Model not loaded properly."
+    
     model.eval()
     src = src.to(device)
     src_mask = create_src_mask(src, word_to_idx['<PAD>']).to(device)
@@ -183,17 +209,20 @@ def generate_response(model, src, word_to_idx, idx_to_word, max_len=20, device='
         generated_tokens.append(next_token)
         tgt = torch.cat([tgt, torch.tensor([[next_token]], dtype=torch.long).to(device)], dim=1)
 
-    response = [idx_to_word[idx] for idx in generated_tokens if idx not in [word_to_idx['<SOS>'], word_to_idx['<EOS>']]]
+    response = [idx_to_word.get(idx, '<UNK>') for idx in generated_tokens if idx not in [word_to_idx['<SOS>'], word_to_idx['<EOS>']]]
     return ' '.join(response)
 
 def text_to_indices(text, word_to_idx, max_len=20):
+    if word_to_idx is None:
+        return torch.tensor([[0]], dtype=torch.long)
+    
     tokens = tokenize(normalize_urdu(text))
     indices = [word_to_idx['<SOS>']] + [word_to_idx.get(token, word_to_idx['<UNK>']) for token in tokens] + [word_to_idx['<EOS>']]
     indices = indices[:max_len + 2]
     indices = indices + [word_to_idx['<PAD>']] * (max_len + 2 - len(indices))
     return torch.tensor([indices], dtype=torch.long)
 
-# Streamlit UI
+# ===== STREAMLIT APP =====
 def main():
     st.set_page_config(
         page_title="Urdu Conversational Chatbot",
@@ -208,40 +237,49 @@ def main():
     """)
     
     # Load model
-    with st.spinner('Loading model...'):
+    with st.spinner('Loading model... This may take a moment.'):
         model, word_to_idx, idx_to_word = load_model_and_vocab()
+    
+    if model is None:
+        st.error("""
+        **Failed to load the model.** This could be because:
+        - The model file is missing or corrupted
+        - There's a version mismatch with PyTorch
+        - The model architecture doesn't match
+        
+        Please check that 'best_model.pth' is in your repository.
+        """)
+        return
     
     # Chat interface
     st.subheader("💬 Chat with the Bot")
     
     # Initialize chat history
     if "messages" not in st.session_state:
-        st.session_state.messages = []
+        st.session_state.messages = [
+            {"role": "assistant", "content": "سلام! میں آپ کی کیسے مدد کر سکتی ہوں؟"}
+        ]
     
-    # Display chat messages from history on app rerun
+    # Display chat messages from history
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
     
     # React to user input
     if prompt := st.chat_input("Type your message in Urdu..."):
-        # Display user message in chat message container
+        # Display user message
         st.chat_message("user").markdown(prompt)
-        # Add user message to chat history
         st.session_state.messages.append({"role": "user", "content": prompt})
         
         # Generate response
         with st.spinner('Thinking...'):
             try:
-                # Convert input to tensor
                 input_tensor = text_to_indices(prompt, word_to_idx)
-                # Generate response
                 response = generate_response(model, input_tensor, word_to_idx, idx_to_word)
                 
-                # Display assistant response in chat message container
+                # Display assistant response
                 with st.chat_message("assistant"):
                     st.markdown(response)
-                # Add assistant response to chat history
                 st.session_state.messages.append({"role": "assistant", "content": response})
                 
             except Exception as e:
@@ -249,7 +287,7 @@ def main():
                 st.chat_message("assistant").markdown(error_msg)
                 st.session_state.messages.append({"role": "assistant", "content": error_msg})
     
-    # Sidebar with information
+    # Sidebar
     with st.sidebar:
         st.header("ℹ️ About")
         st.markdown("""
@@ -266,10 +304,21 @@ def main():
         3. Wait for the AI response
         """)
         
-        # Clear chat button
         if st.button("Clear Chat History"):
-            st.session_state.messages = []
+            st.session_state.messages = [
+                {"role": "assistant", "content": "سلام! میں آپ کی کیسے مدد کر سکتی ہوں؟"}
+            ]
             st.rerun()
+        
+        st.markdown("---")
+        st.markmary("**Technical Details:**")
+        st.code("""
+Model: Transformer
+Layers: 2
+Heads: 2
+Embedding: 256
+Vocabulary: 256 tokens
+        """)
 
 if __name__ == "__main__":
     main()
