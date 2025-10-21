@@ -1,6 +1,6 @@
-torch>=2.0.0
-pandas>=1.5.0
-numpy>=1.21.0
-streamlit>=1.28.0
-unicodedata2>=15.0.0
-sacrebleu>=2.0.0
+torch==2.0.0
+pandas==1.5.3
+numpy==1.24.3
+streamlit==1.28.0
+unicodedata2==15.0.0
+sacrebleu==2.3.1
