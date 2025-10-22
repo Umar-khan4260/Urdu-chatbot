@@ -1,0 +1,12 @@
+# Install Git LFS
+git lfs install
+
+# Track model files
+git lfs track "*.pt"
+git lfs track "*.model"
+
+# Add and commit
+git add .gitattributes
+git add *.pt *.model
+git commit -m "Add model files with LFS"
+git push
