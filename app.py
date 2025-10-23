@@ -45,7 +45,7 @@ st.markdown("""
 # Device configuration
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Model Architecture (same as your notebook)
+# Model Architecture (CORRECTED VERSION)
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, max_len=5000):
         super().__init__()
@@ -84,10 +84,10 @@ class MultiHeadAttention(nn.Module):
         return self.out_linear(context)
 
 class FeedForward(nn.Module):
-    def __init__(self, d_model, d_ff=2048, dropout=0.1):
+    def __init__(self, d_model, d_ff=2048, dropout=0.1):  # FIXED: Changed d__ff to d_ff
         super().__init__()
-        self.linear1 = nn.Linear(d_model, d__ff)
-        self.linear2 = nn.Linear(d_ff, d_model)
+        self.linear1 = nn.Linear(d_model, d_ff)  # FIXED: Changed d__ff to d_ff
+        self.linear2 = nn.Linear(d_ff, d_model)  # FIXED: Changed d__ff to d_ff
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
@@ -166,52 +166,94 @@ def create_tgt_mask(tgt):
     pad_mask = (tgt != pad_token).unsqueeze(1).unsqueeze(2)
     return no_future_mask & pad_mask
 
-# Initialize components
-@st.cache_resource
-def load_model_and_tokenizer():
-    # Load tokenizer
-    tokenizer = spm.SentencePieceProcessor()
-    tokenizer.load('urdu_spm.model')
-    
-    # Initialize model
-    vocab_size = tokenizer.get_piece_size()
-    model = Transformer(vocab_size, d_model=256, num_heads=2, num_enc_layers=2, num_dec_layers=2, dropout=0.1).to(device)
-    
-    # Load trained weights
-    if os.path.exists('best_model.pt'):
-        model.load_state_dict(torch.load('best_model.pt', map_location=device))
-    elif os.path.exists('pretrain_model.pt'):
-        model.load_state_dict(torch.load('pretrain_model.pt', map_location=device))
-    
-    model.eval()
-    return model, tokenizer
-
 # Global variables
 pad_token = 0
 bos_token = 1
 eos_token = 2
 mask_token = 3
 
-# Load model
-try:
-    model, tokenizer = load_model_and_tokenizer()
-    vocab_size = tokenizer.get_piece_size()
-    
-    # Update token IDs based on actual tokenizer
-    bos_token = tokenizer.piece_to_id('<s>') or 1
-    eos_token = tokenizer.piece_to_id('</s>') or 2
-    mask_token = tokenizer.piece_to_id('<mask>') or 3
-    
-except Exception as e:
-    st.error(f"Error loading model: {e}")
-    st.stop()
+# Initialize components
+@st.cache_resource
+def load_model_and_tokenizer():
+    try:
+        # Load tokenizer
+        tokenizer = spm.SentencePieceProcessor()
+        
+        # Try to load from different possible locations
+        tokenizer_paths = [
+            'urdu_spm.model',
+            './urdu_spm.model',
+            'models/urdu_spm.model',
+            './models/urdu_spm.model'
+        ]
+        
+        tokenizer_loaded = False
+        for path in tokenizer_paths:
+            if os.path.exists(path):
+                tokenizer.load(path)
+                tokenizer_loaded = True
+                st.success(f"Loaded tokenizer from: {path}")
+                break
+        
+        if not tokenizer_loaded:
+            st.error("Tokenizer file not found. Please ensure 'urdu_spm.model' is in your repository.")
+            return None, None
+        
+        # Initialize model
+        vocab_size = tokenizer.get_piece_size()
+        model = Transformer(vocab_size, d_model=256, num_heads=2, num_enc_layers=2, num_dec_layers=2, dropout=0.1).to(device)
+        
+        # Update token IDs based on actual tokenizer
+        global bos_token, eos_token, mask_token
+        bos_token = tokenizer.piece_to_id('<s>') or 1
+        eos_token = tokenizer.piece_to_id('</s>') or 2
+        mask_token = tokenizer.piece_to_id('<mask>') or 3
+        
+        # Try to load model from different possible locations
+        model_paths = [
+            'best_model.pt',
+            './best_model.pt',
+            'models/best_model.pt', 
+            './models/best_model.pt',
+            'pretrain_model.pt',
+            './pretrain_model.pt'
+        ]
+        
+        model_loaded = False
+        for path in model_paths:
+            if os.path.exists(path):
+                model.load_state_dict(torch.load(path, map_location=device))
+                model_loaded = True
+                st.success(f"Loaded model from: {path}")
+                break
+        
+        if not model_loaded:
+            st.warning("No pre-trained model found. Using randomly initialized weights.")
+        
+        model.eval()
+        return model, tokenizer
+        
+    except Exception as e:
+        st.error(f"Error loading model: {str(e)}")
+        return None, None
 
 def tokenize(text):
     return tokenizer.encode_as_ids(text)
 
 def generate_response(input_text, max_len=50):
+    if model is None or tokenizer is None:
+        return "Model not loaded properly. Please check the error messages above."
+    
     try:
-        src = torch.tensor([[bos_token] + tokenize(normalize_urdu(input_text)) + [eos_token]]).to(device)
+        input_text = normalize_urdu(input_text.strip())
+        if not input_text:
+            return "Please enter some text."
+            
+        tokens = tokenize(input_text)
+        if not tokens:
+            return "Could not tokenize input text."
+            
+        src = torch.tensor([[bos_token] + tokens + [eos_token]]).to(device)
         src_mask = create_src_mask(src)
         tgt = torch.tensor([[bos_token]]).to(device)
         
@@ -224,7 +266,8 @@ def generate_response(input_text, max_len=50):
                 break
         
         response = tokenizer.decode(tgt[0][1:].cpu().tolist())
-        return response
+        return response if response else "No response generated."
+        
     except Exception as e:
         return f"Error generating response: {str(e)}"
 
@@ -232,6 +275,10 @@ def generate_response(input_text, max_len=50):
 def main():
     st.markdown('<div class="title">💬 Urdu Conversational Chatbot</div>', unsafe_allow_html=True)
     st.markdown('<div class="subtitle">Experience AI-powered Urdu conversations</div>', unsafe_allow_html=True)
+    
+    # Load model (this will show status messages)
+    global model, tokenizer
+    model, tokenizer = load_model_and_tokenizer()
     
     # Initialize chat history
     if "messages" not in st.session_state:
@@ -281,9 +328,21 @@ def main():
             st.rerun()
         
         st.header("Model Info")
-        st.write(f"Vocabulary Size: {vocab_size}")
+        if tokenizer:
+            st.write(f"Vocabulary Size: {tokenizer.get_piece_size()}")
         st.write(f"Device: {device}")
         st.write("Model: Transformer (2 encoder/decoder layers)")
+        
+        # Debug info
+        with st.expander("Debug Information"):
+            st.write("Model loaded:", model is not None)
+            st.write("Tokenizer loaded:", tokenizer is not None)
+            if tokenizer:
+                st.write("Sample tokens:", tokenizer.encode_as_ids("سلام"))
+
+# Global model variables
+model = None
+tokenizer = None
 
 if __name__ == "__main__":
     main()
