@@ -2,11 +2,11 @@
 git lfs install
 
 # Track model files
-git lfs track "*.pt"
-git lfs track "*.model"
+git lfs track "Downloads/best_model.pt"
+git lfs track "Downloads/urdu_spm.model"
 
 # Add and commit
 git add .gitattributes
-git add *.pt *.model
+git add best_model.pt urdu_spm.model
 git commit -m "Add model files with LFS"
 git push
